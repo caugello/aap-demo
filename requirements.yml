@@ -1,0 +1,7 @@
+---
+# This project uses only content bundled with ansible-core
+# (ansible.builtin), so there are no collections to install.
+# The file is kept so project structure is explicit and so this
+# can be extended if a collection is ever required.
+collections: []
+roles: []

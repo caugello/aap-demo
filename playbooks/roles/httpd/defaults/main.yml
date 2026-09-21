@@ -1,0 +1,13 @@
+---
+# Role defaults — override via inventory, extra vars, or job template.
+httpd_pkg_name: httpd
+httpd_service_name: httpd
+httpd_listen_port: 80
+httpd_server_name: "{{ inventory_hostname }}"
+httpd_server_admin: "webmaster@{{ inventory_hostname }}"
+# Docroot to manage; standard distro default kept.
+httpd_docs_root: /var/www/html
+# Set true to write custom index.html into the docroot on every run.
+httpd_manage_index: true
+httpd_log_keep: 4
+httpd_log_compress: true

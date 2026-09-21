@@ -1,0 +1,16 @@
+---
+# Metadata for the httpd role — makes it discoverable in AAP content.
+galaxy_info:
+  author: AAP Demo
+  description: Install and configure the httpd web server on EL/Debian hosts
+  company: Augello
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: EL
+      versions: ["8", "9"]
+  galaxy_tags:
+    - web
+    - http
+    - httpd
+dependencies: []

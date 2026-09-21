@@ -1,0 +1,18 @@
+---
+# Inventory for the AAP inventory source.
+# Replace the placeholder IPs with the real addresses of banana and avocado.
+all:
+  children:
+    web:
+      hosts:
+        banana:
+          ansible_host: 10.128.2.9
+        avocado:
+          ansible_host: 10.128.2.8
+  vars:
+    ansible_user: cloud-user
+    ansible_become: true
+    ansible_become_method: sudo
+    ansible_become_user: root
+    ansible_python_interpreter: /usr/bin/python3
+    httpd_server_name: "{{ inventory_hostname }}"

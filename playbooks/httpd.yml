@@ -1,0 +1,11 @@
+---
+# Install and configure the httpd web server.
+# Usage (local): ansible-playbook -i inventory/inventory.yml playbooks/httpd.yml
+# Usage (AAP): job template pointing at this play, with the "web" group from your inventory.
+- name: Install and configure httpd
+  hosts: web
+  become: true
+  gather_facts: true
+  roles:
+    - role: httpd
+      tags: [httpd, web]

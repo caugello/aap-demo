@@ -1,0 +1,47 @@
+---
+- name: Verify host architecture is supported
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family | default('RedHat') in ['RedHat', 'Debian']
+    fail_msg: "This role supports RHEL-family (RedHat) and Debian-family hosts"
+    success_msg: "Supported OS family detected"
+
+- name: Install httpd package
+  ansible.builtin.package:
+    name: "{{ httpd_pkg_name }}"
+    state: present
+  register: httpd_install
+  retries: 3
+  until: httpd_install is succeeded
+  become: true
+
+- name: Ensure logrotate is installed (for log retention)
+  ansible.builtin.package:
+    name: logrotate
+    state: present
+  become: true
+
+- name: Deploy server configuration
+  ansible.builtin.template:
+    src: httpd.conf.j2
+    dest: /etc/httpd/conf.d/aap-managed.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart httpd
+
+- name: Deploy custom index page
+  ansible.builtin.copy:
+    content: "{{ lookup('template', 'index.html.j2') }}"
+    dest: "{{ httpd_docs_root }}/index.html"
+    owner: apache
+    group: apache
+    mode: "0644"
+  when: httpd_manage_index | bool
+  notify: Reload httpd
+
+- name: Ensure httpd is enabled and running
+  ansible.builtin.service:
+    name: "{{ httpd_service_name }}"
+    state: started
+    enabled: true

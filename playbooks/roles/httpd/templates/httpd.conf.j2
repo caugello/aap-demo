@@ -1,0 +1,9 @@
+# Managed by Ansible Automation Platform — do not edit by hand
+ServerName {{ httpd_server_name }}:{{ httpd_listen_port }}
+ServerAdmin {{ httpd_server_admin }}
+
+<Directory {{ httpd_docs_root }}>
+    Options -Indexes
+    AllowOverride None
+    Require all granted
+</Directory>
