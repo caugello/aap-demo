@@ -1,0 +1,21 @@
+---
+# sosreport (deep-dive evidence collection) — installs sos on demand,
+# runs a plugin-scoped report on the target host, and prints the
+# artifact path at the end. All output stays on the target host.
+#
+# Scoped by design: pass the plugins to run as a list, ideally derived
+# from an earlier diag triage (or LLM verdict), e.g.:
+#   -e sosreport_plugins=[httpd, filesystems]
+# With an empty list a full (unscoped) report is produced.
+#
+# Usage (local):
+#   ansible-playbook -i inventory/inventory.yml playbooks/sosreport.yml \
+#       -e sosreport_plugins=[httpd]
+#
+# Usage (AAP): job template with play "playbooks/sosreport.yml".
+- name: Run sosreport deep dive
+  hosts: all
+  gather_facts: true
+  roles:
+    - role: sosreport
+      tags: [sosreport]

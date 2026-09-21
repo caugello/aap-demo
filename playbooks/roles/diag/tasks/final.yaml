@@ -1,5 +1,6 @@
 ---
-# Compose the final report: severity, suspect list, text + JSON artifacts.
+# Compose the final report and print it to the job log.
+# The job log IS the artifact — nothing is written or fetched.
 
 - name: Compute overall severity
   ansible.builtin.set_fact:
@@ -30,32 +31,18 @@
       suspect_areas: "{{ diag_suspects }}"
       findings: "{{ diag_findings }}"
       suggested_next:
-        - "If a service is affected, re-run with -e diag_services=[<service>] for scoped detail"
-        - "sosreport --allow-missing -n triage for full evidence set"
+        - "Re-run with -e diag_services=[<service>] once the suspect is known"
+        - "sosreport --allow-missing -n triage for a full evidence pack"
 
-- name: Save text report on target
-  ansible.builtin.template:
-    src: report.j2
-    dest: "/var/tmp/diag-{{ inventory_hostname }}.txt"
-    owner: root
-    mode: "0644"
-
-- name: Save JSON report on target
-  ansible.builtin.copy:
-    content: "{{ diag_report | to_nice_json(indent=2) }}"
-    dest: "/var/tmp/diag-{{ inventory_hostname }}.json"
-    owner: root
-    mode: "0644"
-
-- name: Pull reports back to controller
-  ansible.builtin.fetch:
-    src: "/var/tmp/diag-{{ inventory_hostname }}.json"
-    dest: "/var/tmp/diag-{{ inventory_hostname }}/"
-    flat: false
-  delegate_to: localhost
-  become: false
-  when: diag_save_report | bool
+- name: Build report header
+  ansible.builtin.set_fact:
+    diag_report_header: >-
+      === DIAG REPORT — {{ diag_report.host }}
+      — severity={{ diag_report.severity | upper }}
+      — suspects={{ diag_report.suspect_areas | join(',') or 'none' }} ===
 
 - name: Print diagnostic report
   ansible.builtin.debug:
-    msg: "{{ diag_report | to_nice_json(indent=2) }}"
+    msg:
+      - "{{ diag_report_header }}"
+      - "{{ diag_report | to_nice_json(indent=2) }}"

@@ -17,6 +17,3 @@ diag_dns_probe_host: "example.com"
 
 # Knobs for the optional scoped httpd check
 diag_httpd_port: 80
-
-# Artifacts
-diag_save_report: true       # pull JSON report back to the controller

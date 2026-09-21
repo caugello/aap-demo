@@ -6,6 +6,7 @@ A growing set of Ansible playbooks for our fleet. We start with httpd; more play
 
 - `httpd` — install and configure the httpd web server
 - `diag` — host-level diagnostics that produces an LLM-ready report
+- `sosreport` — deep-dive evidence pack (installs `sos` on demand, runs a plugin-scoped report on the target host)
 
 ## Requirements
 

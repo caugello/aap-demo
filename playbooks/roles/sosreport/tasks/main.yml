@@ -1,0 +1,125 @@
+---
+# Non-fatal deep-dive: install sos if needed, run a plugin-scoped
+# sosreport on the target host, print the artifact path at the end.
+
+- name: Initialize sosreport findings
+  ansible.builtin.set_fact:
+    sosreport_findings: []
+
+# ------------------------------------------------------------- preflight ---
+- name: Check free space on output filesystem
+  ansible.builtin.command:
+    cmd: df -Pm /var/tmp
+  register: sosreport_df
+  failed_when: false
+  changed_when: false
+
+- name: Record disk space finding
+  ansible.builtin.set_fact:
+    sosreport_free_mb: "{{ (sosreport_df.stdout_lines | last | split() | slice(-3, 1)) | default(['', '']) }}"
+  when: sosreport_df.rc == 0
+
+- name: Record disk space finding (level)
+  ansible.builtin.set_fact:
+    sosreport_findings: >-
+      {{ sosreport_findings
+         + [{'level': 'ok' if (sosreport_free_mb | default(['', '0']))[1] | int > sosreport_min_free_mb
+            else 'warn', 'area': 'resources',
+            'detail': 'free space on /var/tmp: ' ~ (sosreport_free_mb | default(['', '?']))[1] ~ ' MB
+            (need ~' ~ sosreport_min_free_mb ~ ' MB)'}] }}
+  when: sosreport_free_mb is defined
+
+# --------------------------------------------------------------- install ---
+- name: Check whether sos CLI is present
+  ansible.builtin.command:
+    cmd: command -v sos
+  register: sosreport_cli
+  failed_when: false
+  changed_when: false
+
+- name: Install sos package
+  ansible.builtin.package:
+    name: sos
+    state: present
+  register: sosreport_install
+  retries: 3
+  until: sosreport_install is succeeded
+  when: sosreport_cli.rc != 0
+
+- name: Verify sos CLI is available
+  ansible.builtin.command:
+    cmd: sos --version
+  register: sosreport_version
+  failed_when: false
+  changed_when: false
+
+- name: Record sos availability finding
+  ansible.builtin.set_fact:
+    sosreport_findings: >-
+      {{ sosreport_findings
+         + [{'level': 'ok' if sosreport_version.rc == 0 else 'fail',
+            'area': 'tooling',
+            'detail': 'sos ' ~ (sosreport_version.stdout | default('not available'))
+                      ~ (' (installed by this play)' if (sosreport_install is succeeded) else ''),
+            'log_lines': (sosreport_version.stderr_lines | default([], true))[:5]}] }}
+  when: sosreport_version is defined
+
+# ------------------------------------------------------------------ run ---
+- name: Build plugin args
+  ansible.builtin.set_fact:
+    sosreport_plugin_args: >-
+      {{ (sosreport_plugins
+         | map('trim')
+         | map('regex_replace', '[^a-zA-Z0-9_-]', '')
+         | select('ne', '')
+         | map('regex_replace', '^(.+)$', '--plugin \1')
+         | join(' ')) }}
+
+- name: Build sosreport command
+  ansible.builtin.set_fact:
+    sosreport_cmd: >-
+      sos report -n {{ sosreport_name }}
+      --output-dir {{ sosreport_output_dir }}
+      {{ '--allow-missing' if sosreport_allow_missing else '' }}
+      {{ sosreport_plugin_args }}
+      --quiet
+
+- name: Run sosreport
+  ansible.builtin.command:
+    cmd: "{{ sosreport_cmd.split() | join(' ') }}"
+  register: sosreport_run
+  failed_when: false
+  changed_when: true
+  when: sosreport_version.rc == 0
+
+- name: Record sosreport run finding
+  ansible.builtin.set_fact:
+    sosreport_findings: >-
+      {{ sosreport_findings
+         + [{'level': 'ok' if sosreport_run.rc == 0 else 'fail',
+            'area': 'collection',
+            'detail': 'sosreport rc=' ~ (sosreport_run.rc | default('skipped')),
+            'log_lines': (sosreport_run.stderr_lines | default([], true))[-5:]}] }}
+  when: sosreport_run is defined
+
+# -------------------------------------------------------------- locate ---
+- name: Locate the produced archive
+  ansible.builtin.find:
+    paths: "{{ sosreport_output_dir }}"
+    patterns: "sos-{{ sosreport_name }}-*.tar.gz"
+  register: sosreport_artifacts
+  when: sosreport_run.rc | default(1) == 0
+
+- name: Select the newest archive
+  ansible.builtin.set_fact:
+    sosreport_latest: >-
+      {{ (sosreport_artifacts.files | default([])
+         | sort(attribute='mtime') | last) | default('', true) }}
+  when: sosreport_run.rc | default(1) == 0
+
+- name: Print sosreport summary
+  ansible.builtin.debug:
+    msg:
+      - "=== SOSREPORT — host={{ inventory_hostname }} — name={{ sosreport_name }} ==="
+      - "artifact: {{ (sosreport_latest.path) if (sosreport_latest is mapping) else 'none' }}"
+      - "findings: {{ sosreport_findings | to_nice_json(indent=2) }}"

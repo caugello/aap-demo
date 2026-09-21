@@ -1,0 +1,17 @@
+---
+# Report name — becomes the archive basename prefix (sos-<name>-…).
+# Use the triage verdict to make this meaningful, e.g. "httpd-banana".
+sosreport_name: triage
+
+# Plugins to scope the report to. Empty list = full unscoped report
+# (large). Suggested entries: httpd, sys, filesystems, network, rpm.
+sosreport_plugins: []
+
+# Where the archive is written on the target host.
+sosreport_output_dir: /var/tmp
+
+# --allow-missing: succeed even if optional plugin deps are absent.
+sosreport_allow_missing: true
+
+# Minimum free space required for the archive (MB).
+sosreport_min_free_mb: 768
