@@ -1,0 +1,22 @@
+---
+# Generic (service-agnostic) host diagnostics defaults.
+#
+# diag_services: OPTIONAL scoped checks, only meaningful once the suspect
+# service is known (e.g. set by LLM triage in a later workflow job).
+# Each entry maps to tasks/checks/<name>.yaml.
+diag_services: []
+
+# Thresholds
+diag_disk_threshold: 85      # percent used -> warn; >=90 hard-fails
+diag_mem_threshold: 90       # percent of total memory in use -> warn
+diag_load_factor: 2.0        # load1 > vcpus * factor -> warn
+
+# Optional checks
+diag_check_dns: true
+diag_dns_probe_host: "example.com"
+
+# Knobs for the optional scoped httpd check
+diag_httpd_port: 80
+
+# Artifacts
+diag_save_report: true       # pull JSON report back to the controller

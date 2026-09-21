@@ -1,0 +1,61 @@
+---
+# Compose the final report: severity, suspect list, text + JSON artifacts.
+
+- name: Compute overall severity
+  ansible.builtin.set_fact:
+    diag_severity: >-
+      {{
+        'fail' if (diag_findings | selectattr('level', 'equalto', 'fail') | list)
+        else ('warn' if (diag_findings | selectattr('level', 'equalto', 'warn') | list)
+        else 'ok')
+      }}
+
+- name: Shortlist suspect areas from fail/warn findings
+  ansible.builtin.set_fact:
+    diag_suspects: >-
+      {{ (diag_findings
+         | selectattr('level', 'in', ['fail', 'warn'])
+         | map(attribute='area')
+         | unique
+         | list) }}
+
+- name: Build report document
+  ansible.builtin.set_fact:
+    diag_report:
+      host: "{{ inventory_hostname }}"
+      os: "{{ ansible_distribution | default('unknown') }} {{ ansible_distribution_version | default('') }}"
+      timestamp: "{{ now(utc=true).isoformat() }}"
+      scoped_checks: "{{ diag_services }}"
+      severity: "{{ diag_severity }}"
+      suspect_areas: "{{ diag_suspects }}"
+      findings: "{{ diag_findings }}"
+      suggested_next:
+        - "If a service is affected, re-run with -e diag_services=[<service>] for scoped detail"
+        - "sosreport --allow-missing -n triage for full evidence set"
+
+- name: Save text report on target
+  ansible.builtin.template:
+    src: report.j2
+    dest: "/var/tmp/diag-{{ inventory_hostname }}.txt"
+    owner: root
+    mode: "0644"
+
+- name: Save JSON report on target
+  ansible.builtin.copy:
+    content: "{{ diag_report | to_nice_json(indent=2) }}"
+    dest: "/var/tmp/diag-{{ inventory_hostname }}.json"
+    owner: root
+    mode: "0644"
+
+- name: Pull reports back to controller
+  ansible.builtin.fetch:
+    src: "/var/tmp/diag-{{ inventory_hostname }}.json"
+    dest: "/var/tmp/diag-{{ inventory_hostname }}/"
+    flat: false
+  delegate_to: localhost
+  become: false
+  when: diag_save_report | bool
+
+- name: Print diagnostic report
+  ansible.builtin.debug:
+    msg: "{{ diag_report | to_nice_json(indent=2) }}"

@@ -1,0 +1,254 @@
+---
+# Generic host diagnostics — assumes NO knowledge of which service is
+# failing. Collects evidence that pinpoints the suspect area and service.
+# Every check is non-fatal; findings are recorded with evidence.
+
+# ---------------------------------------------------------------- facts ---
+- name: Record OS baseline
+  ansible.builtin.include_tasks: ../_finding.yaml
+  vars:
+    finding_level: info
+    finding_area: system
+    finding_detail: >-
+      {{ ansible_distribution | default('unknown') }}
+      {{ ansible_distribution_version | default('') }}
+      ({{ ansible_architecture | default('?') }}),
+      kernel {{ ansible_kernel | default('?') }},
+      vcpus {{ ansible_vcpus | default('1') | int }},
+      {{ ((ansible_memtotal_mb | default(0)) / 1024) | round(1) }} GB RAM
+
+# --------------------------------------------------------------- resources ---
+- name: Collect disk usage
+  ansible.builtin.command:
+    cmd: df -P
+  register: diag_df
+  failed_when: false
+  changed_when: false
+
+- name: Pre-compute disk hot list
+  ansible.builtin.set_fact:
+    diag_disk_hot: >-
+      {{ (diag_df.stdout_lines | default([]))
+         | select('search', '\\d+%\\s+/') | list }}
+  when: diag_df.rc | default(1) == 0
+
+- name: Pre-compute disk max percent
+  ansible.builtin.set_fact:
+    diag_disk_pct_max: >-
+      {{ (diag_disk_hot | default([])
+         | map('regex_search', '(\\d+)%')
+         | map('regex_replace', '(\\d+)%', '\\1')
+         | map('int') | max)
+         | default(0) }}
+  when: diag_disk_hot | default([]) | length > 0
+
+- name: Record disk finding
+  ansible.builtin.include_tasks: ../_finding.yaml
+  vars:
+    finding_level: >-
+      "ok" if (diag_disk_pct_max | default(0) | int) < diag_disk_threshold
+      else ("warn" if (diag_disk_pct_max | default(0) | int) < 90 else "fail")
+    finding_area: resources
+    finding_detail: >-
+      max disk usage {{ (diag_disk_pct_max | default(0)) }}%
+      (warn at {{ diag_disk_threshold }}%, fail at 90%);
+      all real mounts listed below
+    finding_log_lines: "{{ diag_disk_hot | default([]) }}"
+
+- name: Collect memory usage
+  ansible.builtin.command:  # noqa risky-shell-pipe
+    cmd: free -m | awk '/^Mem:/{print int($3/$2*100), $7}'
+  register: diag_mem_raw
+  failed_when: false
+  changed_when: false
+
+- name: Evaluate memory
+  ansible.builtin.set_fact:
+    diag_mem_percent: "{{ (diag_mem_raw.stdout.split() | default(['0', '0']))[0] }}"
+    diag_mem_available_mb: "{{ (diag_mem_raw.stdout.split() | default(['0', '0']))[1] }}"
+  when: diag_mem_raw.rc | default(1) == 0
+
+- name: Record memory finding
+  ansible.builtin.include_tasks: ../_finding.yaml
+  vars:
+    finding_level: >-
+      "ok" if diag_mem_percent | default(0) | int < diag_mem_threshold
+      else "warn"
+    finding_area: resources
+    finding_detail: >-
+      memory: {{ diag_mem_percent | default('?') }}% used
+      ({{ diag_mem_available_mb | default('?') }} MB available,
+      threshold {{ diag_mem_threshold }}%)
+
+- name: Collect load average
+  ansible.builtin.command:  # noqa risky-shell-pipe
+    cmd: awk '{print $1}' /proc/loadavg
+  register: diag_load
+  failed_when: false
+  changed_when: false
+
+- name: Record load finding
+  ansible.builtin.include_tasks: ../_finding.yaml
+  vars:
+    finding_level: >-
+      "ok" if diag_load.stdout | default('0') | trim | float
+      <= ((ansible_vcpus | default(1) | int) * diag_load_factor)
+      else "warn"
+    finding_area: resources
+    finding_detail: >-
+      load-1: {{ diag_load.stdout | default('?') | trim }}
+      (vcpus {{ ansible_vcpus | default('1') | int }})
+
+# ------------------------------------------------------------ failing units ---
+# NOTE: systemd exposes no "list failed units" Ansible module;
+# `command` is the correct idiom here (suppressed via noqa).
+- name: List failed systemd units
+  ansible.builtin.command:  # noqa command-instead-of-module
+    cmd: systemctl list-units --state=failed --no-legend
+  register: diag_failed_units
+  failed_when: false
+  changed_when: false
+
+- name: Record failed units finding
+  ansible.builtin.include_tasks: ../_finding.yaml
+  vars:
+    finding_level: >-
+      "fail" if diag_failed_units.stdout_lines | default([]) | length > 0
+      else "ok"
+    finding_area: services
+    finding_detail: >-
+      {{ (diag_failed_units.stdout_lines | default([]) | length) }}
+      failed unit(s):
+      {{ ((diag_failed_units.stdout_lines | default([])
+         | map('trim') | map('regex_replace', '\\s+.*', ''))
+         | join(', ')) or 'none' }}
+    finding_log_lines: "{{ diag_failed_units.stdout_lines | default([]) }}"
+
+- name: List units stuck activating
+  ansible.builtin.command:  # noqa command-instead-of-module
+    cmd: systemctl list-units --state=activating --no-legend
+  register: diag_activating
+  failed_when: false
+  changed_when: false
+
+- name: Record activating units finding
+  ansible.builtin.include_tasks: ../_finding.yaml
+  when: (diag_activating.stdout | default('') | trim) | length > 0
+  vars:
+    finding_level: warn
+    finding_area: services
+    finding_detail: >-
+      stuck activating:
+      {{ ((diag_activating.stdout_lines | default([])
+         | map('trim') | map('regex_replace', '\\s+.*', ''))
+         | join(', ')) }}
+
+# ------------------------------------------------------- error log signal ---
+- name: Collect err-level journal lines (last 24h)
+  ansible.builtin.command:
+    cmd: journalctl -p 3 --since "24 hours ago" --no-pager -q
+  register: diag_journal_err
+  failed_when: false
+  changed_when: false
+
+- name: Summarize journal errors
+  ansible.builtin.set_fact:
+    diag_err_lines: >-
+      {{ (diag_journal_err.stdout_lines | default([])
+         | select('search', 'error|fail|crit|denied|refused|timeout|segmentation')
+         | list) }}
+  when: (diag_journal_err.stdout | default('') | trim) | length > 0
+
+- name: Compute journal error tail
+  ansible.builtin.set_fact:
+    diag_err_tail: >-
+      {{ (diag_err_lines | default([]))
+         [(diag_err_lines | default([]) | length) - 6: ] | list }}
+  when: (diag_err_lines | default([]) | length) > 0
+
+- name: Record journal error finding
+  ansible.builtin.include_tasks: ../_finding.yaml
+  vars:
+    finding_level: >-
+      "warn" if (diag_err_lines | default([]) | length) > 0 else "ok"
+    finding_area: logs
+    finding_detail: >-
+      {{ (diag_err_lines | default([]) | length) }}
+      error-type journal line(s), last 24h, severity <= err
+    finding_log_lines: "{{ diag_err_tail | default([]) }}"
+  when: diag_journal_err is succeeded
+
+# -------------------------------------------------------- network baseline ---
+- name: List listening sockets with owning processes
+  ansible.builtin.command:
+    cmd: ss -lntp
+  register: diag_listeners
+  failed_when: false
+  changed_when: false
+
+- name: Record network listeners finding
+  ansible.builtin.include_tasks: ../_finding.yaml
+  vars:
+    finding_level: info
+    finding_area: network
+    finding_detail: >-
+      {{ ((diag_listeners.stdout_lines | default([]) | length) - 1) if (diag_listeners.stdout_lines | default([]) | length) > 0 else 0 }}
+      listening socket(s)
+    finding_log_lines: >-
+      {{ (diag_listeners.stdout_lines | default([]))[1:7] | list }}
+
+- name: Check DNS resolution
+  ansible.builtin.command:
+    cmd: getent hosts {{ diag_dns_probe_host }}
+  register: diag_dns
+  failed_when: false
+  changed_when: false
+  when: diag_check_dns | bool
+
+- name: Record DNS finding
+  ansible.builtin.include_tasks: ../_finding.yaml
+  when: diag_check_dns | bool
+  vars:
+    finding_level: >-
+      "ok" if (diag_dns.rc | default(1) == 0) else "warn"
+    finding_area: network
+    finding_detail: >-
+      DNS probe {{ diag_dns_probe_host }}
+      {{ 'resolved' if (diag_dns.rc | default(1) == 0)
+         else 'did NOT resolve — check /etc/resolv.conf and network' }}
+
+# ------------------------------------------------------------- top consumers ---
+- name: List top memory consumers
+  ansible.builtin.command:  # noqa risky-shell-pipe
+    cmd: ps aux --sort=-%mem | head -n 6
+  register: diag_top_mem
+  failed_when: false
+  changed_when: false
+
+- name: Record top memory consumers finding
+  ansible.builtin.include_tasks: ../_finding.yaml
+  vars:
+    finding_level: info
+    finding_area: processes
+    finding_detail: "top 5 processes by memory (RSS)"
+    finding_log_lines: >-
+      {{ (diag_top_mem.stdout_lines | default([]))[1:6] | list }}
+
+# ----------------------------------------------------------- package recency ---
+- name: List recent package changes
+  ansible.builtin.command:  # noqa command-instead-of-module risky-shell-pipe
+    cmd: rpm -q --last | head -n 10
+  register: diag_recent_pkgs
+  failed_when: false
+  changed_when: false
+  when: ansible_pkg_mgr | default('') in ['dnf', 'yum']
+
+- name: Record recent package changes finding
+  ansible.builtin.include_tasks: ../_finding.yaml
+  when: (diag_recent_pkgs is succeeded and diag_recent_pkgs.rc | default(1) == 0)
+  vars:
+    finding_level: info
+    finding_area: system
+    finding_detail: "most recent package activity (possible recent change)"
+    finding_log_lines: >-
+      {{ (diag_recent_pkgs.stdout_lines | default([]))[:5] | list }}

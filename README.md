@@ -5,6 +5,7 @@ A growing set of Ansible playbooks for our fleet. We start with httpd; more play
 ## Contents
 
 - `httpd` — install and configure the httpd web server
+- `diag` — host-level diagnostics that produces an LLM-ready report
 
 ## Requirements
 
@@ -15,8 +16,15 @@ A growing set of Ansible playbooks for our fleet. We start with httpd; more play
 
 ```bash
 ansible-galaxy collection install -r requirements.yml
+
+# Install or configure httpd on the web group
 ansible-playbook -i inventory/inventory.yml playbooks/httpd.yml
+
+# Diagnostics — outputs a JSON + text report you can feed to an LLM
+ansible-playbook -i inventory/inventory.yml playbooks/diag.yml
 ```
+
+Diagnostics supports a `diag_services` list to scope which services to check. Defaults to `[httpd]`.
 
 ## Usage in Ansible Automation Platform
 

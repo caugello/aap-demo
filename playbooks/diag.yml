@@ -1,0 +1,17 @@
+---
+# Generic, service-agnostic host triage. Collects evidence, shortlists
+# suspect areas, and emits an LLM-ready JSON report it can reason over.
+#
+# Optional: pass -e diag_services=[httpd] once the suspect is known, to
+# run the scoped checks on top of the generic baseline.
+#
+# Usage (local):
+#   ansible-playbook -i inventory/inventory.yml playbooks/diag.yml
+#
+# Usage (AAP): job template with play "playbooks/diag.yml".
+- name: Diagnostics (agnostic triage)
+  hosts: all
+  gather_facts: true
+  roles:
+    - role: diag
+      tags: [diag]

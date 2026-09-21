@@ -1,0 +1,14 @@
+---
+# Appends one severity-tagged finding to diag_findings.
+# Required vars:
+#   finding_level  - ok | warn | fail | info
+#   finding_area   - short area name (availability, network, logs, ...)
+#   finding_detail - one human-readable sentence
+# Optional:
+#   finding_log_lines - list of supporting raw lines (last N log lines etc.)
+- name: Record finding
+  ansible.builtin.set_fact:
+    diag_findings: >-
+      {{ diag_findings + [{'level': finding_level, 'area': finding_area,
+      'detail': finding_detail,
+      'log_lines': finding_log_lines | default([], true)}] }}

@@ -1,0 +1,94 @@
+---
+# httpd checks. Every check is non-fatal — findings are recorded, never abort.
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+  failed_when: false
+  changed_when: false
+
+- name: Record service finding
+  ansible.builtin.include_tasks: ../_finding.yaml
+  vars:
+    finding_level: >-
+      "ok" if (ansible_facts.services.httpd is defined
+      and ansible_facts.services.httpd.state == 'running') else "fail"
+    finding_area: availability
+    finding_detail: >-
+      httpd unit state={{ ansible_facts.services.httpd.state | default('not found') }},
+      loaded={{ ansible_facts.services.httpd.loaded | default('unknown') }},
+      enabled={{ ansible_facts.services.httpd.enabled | default('unknown') }}
+
+- name: Check listening sockets
+  ansible.builtin.command:
+    cmd: ss -ltn
+  register: diag_sockets
+  failed_when: false
+  changed_when: false
+
+- name: Record listening socket finding
+  ansible.builtin.include_tasks: ../_finding.yaml
+  vars:
+    finding_level: >-
+      "ok" if (diag_sockets.stdout
+      is search(':' ~ diag_httpd_port)
+      and (diag_sockets.stdout
+      is search('LISTEN'))) else "fail"
+    finding_area: network
+    finding_detail: >-
+      port {{ diag_httpd_port }} is
+      {{ 'listening'
+         if (diag_sockets.stdout is search('LISTEN')
+         and (diag_sockets.stdout is search(':' ~ diag_httpd_port)))
+         else 'not listening' }}
+
+- name: Check httpd config syntax
+  ansible.builtin.command:
+    cmd: httpd -t
+  register: diag_config_test
+  failed_when: false
+  changed_when: false
+
+- name: Record config finding
+  ansible.builtin.include_tasks: ../_finding.yaml
+  vars:
+    finding_level: >-
+      "ok" if diag_config_test.rc == 0 else "fail"
+    finding_area: configuration
+    finding_detail: >-
+      httpd -t rc={{ diag_config_test.rc | default('n/a') }}
+      ({{ (diag_config_test.stderr_lines | default(['no output']))[0] }})
+    finding_log_lines: "{{ (diag_config_test.stderr_lines | default([]))[:5] }}"
+
+- name: Read httpd error log
+  ansible.builtin.slurp:
+    src: /var/log/httpd/error_log
+  register: diag_errlog_raw
+  failed_when: false
+  changed_when: false
+
+- name: Evaluate error log
+  ansible.builtin.set_fact:
+    diag_errlog_text: >-
+      {{ (diag_errlog_raw.content | b64decode)
+      if diag_errlog_raw is succeeded else '' }}
+    diag_errlog_err_lines: >-
+      {{ (diag_errlog_text.splitlines()
+      | select('search', 'error|alert|crit')
+      | list)[-5:] }}
+    diag_errlog_err_count: >-
+      {{ diag_errlog_text.splitlines()
+      | select('search', 'error|alert|crit')
+      | list | length }}
+  when: diag_errlog_raw is succeeded
+
+- name: Record error log finding
+  ansible.builtin.include_tasks: ../_finding.yaml
+  vars:
+    finding_level: >-
+      "ok" if diag_errlog_err_count | default(0) | int == 0
+      else "warn"
+    finding_area: logs
+    finding_detail: >-
+      /var/log/httpd/error_log:
+      {{ diag_errlog_err_count | default(0) }} error-level line(s)
+    finding_log_lines: "{{ diag_errlog_err_lines | default([]) }}"

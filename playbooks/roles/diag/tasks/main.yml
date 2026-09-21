@@ -1,0 +1,22 @@
+---
+# Initialize per-host diagnostic state
+- name: Initialize diagnostics state
+  ansible.builtin.set_fact:
+    diag_findings: []
+    diag_suspect_units: []
+
+# Generic host checks — run for every host, assume nothing
+- name: Run generic host checks
+  ansible.builtin.include_tasks: host.yaml
+
+# Optional scoped checks — only when the suspect service is already known
+# (e.g. passed in as extra var from a prior LLM triage job)
+- name: Run scoped service checks
+  ansible.builtin.include_tasks: "checks/{{ item }}.yaml"
+  loop: "{{ diag_services }}"
+  loop_control:
+    label: "{{ item }}"
+
+# Severity, report, artifacts
+- name: Finalize diagnosis
+  ansible.builtin.include_tasks: final.yaml
