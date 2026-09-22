@@ -1,0 +1,7 @@
+---
+# Reload the httpd service — graceful, so in-flight requests complete.
+
+- name: Reloading httpd
+  ansible.builtin.service:
+    name: httpd
+    state: reloading

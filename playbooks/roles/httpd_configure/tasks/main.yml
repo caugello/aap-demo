@@ -1,0 +1,177 @@
+---
+# Deploy a complete httpd configuration and apply it safely.
+
+- name: Verify httpd is installed
+  ansible.builtin.command:
+    cmd: command -v httpd
+  register: httpd_configure_present
+  failed_when: false
+  changed_when: false
+
+- name: Fail early with a clear message if httpd is missing
+  ansible.builtin.assert:
+    that:
+      - httpd_configure_present.rc == 0
+    fail_msg: >-
+      httpd is not installed on this host.
+      Run the install play (playbooks/httpd.yml) first.
+    quiet: true
+
+- name: Discover the compiled-in server root and conf dir
+  ansible.builtin.command:
+    cmd: httpd -V
+  register: httpd_configure_ver
+  failed_when: false
+  changed_when: false
+
+- name: Record effective httpd layout
+  ansible.builtin.set_fact:
+    httpd_configure_server_root: >-
+      {{ ((httpd_configure_ver.stdout_lines | default([]))
+         | select('search', 'SERVER_ROOT')
+         | map('trim') | map('regex_replace', '.*=\\s*', '')) | first
+         | default('/etc/httpd') }}
+    httpd_configure_main_conf: >-
+      {{ ((httpd_configure_ver.stdout_lines | default([]))
+         | select('search', 'APACHE_CONFDIR')
+         | map('trim') | map('regex_replace', '.*=\\s*', '')) | first
+         | default('/etc/httpd/conf/httpd.conf') }}
+
+- name: Anchor the managed drop-in inside the discovered server root
+  ansible.builtin.set_fact:
+    httpd_configure_dest: "{{ httpd_configure_server_root }}/conf.d/90-aap-managed.conf"
+
+- name: Verify no conflicting ServerName is set in conf.d
+  ansible.builtin.shell:  # noqa risky-shell-pipe
+    cmd: grep -RIn '^ServerName ' "{{ httpd_configure_server_root }}/conf.d/" "{{ httpd_configure_main_conf }}" 2>/dev/null
+  register: httpd_configure_servernames
+  failed_when: false
+  changed_when: false
+
+- name: Warn on multiple ServerName directives (first one wins per virtual host)
+  ansible.builtin.debug:
+    msg: >-
+      NOTE: multiple ServerName directives found — verify they agree:
+      {{ httpd_configure_servernames.stdout_lines | default([]) }}
+  when: httpd_configure_servernames.stdout_lines | default([]) | length > 1
+
+# --------------------------------------- ServerRoot remediation (broken main conf) ---
+# Common breakage: ServerRoot points at a directory that no longer exists
+# (failed partial install, manual tampering, container artifact). httpd -t
+# then fails before conf.d even loads. Normalize it to a valid directory.
+- name: Ensure the expected ServerRoot directory exists
+  ansible.builtin.file:
+    path: "{{ httpd_configure_server_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Check whether the main conf defines a ServerRoot
+  ansible.builtin.shell:  # noqa risky-shell-pipe
+    cmd: grep -qE '^ServerRoot[[:space:]]+' "{{ httpd_configure_main_conf }}"
+  register: httpd_configure_has_serverroot
+  failed_when: false
+  changed_when: false
+
+- name: Replace an existing malformed ServerRoot
+  ansible.builtin.lineinfile:
+    path: "{{ httpd_configure_main_conf }}"
+    regexp: "^ServerRoot[[:space:]]+.+"
+    line: "ServerRoot {{ httpd_configure_server_root }}"
+  register: httpd_configure_serverroot_fix
+  when: httpd_configure_has_serverroot.rc == 0
+
+- name: Add a valid ServerRoot if the main conf has none
+  ansible.builtin.lineinfile:
+    path: "{{ httpd_configure_main_conf }}"
+    insertafter: EOF
+    regexp: "^ServerRoot[[:space:]]+{{ httpd_configure_server_root }}[[:space:]]*$"
+    line: "ServerRoot {{ httpd_configure_server_root }}"
+  register: httpd_configure_serverroot_fix
+  when: httpd_configure_has_serverroot.rc != 0
+
+- name: Create httpd log directory if missing
+  ansible.builtin.file:
+    path: "{{ httpd_configure_log_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure document root exists with sane ownership
+  ansible.builtin.file:
+    path: "{{ httpd_configure_docroot }}"
+    state: directory
+    owner: apache
+    group: apache
+    mode: "0755"
+
+- name: Deploy the managed httpd configuration
+  ansible.builtin.template:
+    src: httpd.conf.j2
+    dest: "{{ httpd_configure_dest }}"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Reloading httpd
+
+- name: Validate configuration syntax before allowing reload
+  ansible.builtin.command:
+    cmd: httpd -t -D DONT_LOCK_LOGS
+  register: httpd_configure_test
+  failed_when: false
+  changed_when: false
+
+- name: Gather evidence for a failed config test
+  ansible.builtin.shell:  # noqa risky-shell-pipe
+    cmd: >-
+      echo "=== ServerRoot line ===";
+      grep -n 'ServerRoot' "{{ httpd_configure_main_conf }}" 2>&1;
+      echo "=== ServerRoot dir ===";
+      ls -ld "{{ httpd_configure_server_root }}" 2>&1;
+      echo "=== compiled-in values ===";
+      httpd -V 2>&1 | head -8;
+      echo "=== line 34 area of main conf ===";
+      sed -n '28,40p' "{{ httpd_configure_main_conf }}" 2>&1
+  register: httpd_configure_evidence
+  failed_when: false
+  changed_when: false
+  when: httpd_configure_test.rc != 0
+
+- name: Abandon change if new config is invalid (reload will not run)
+  ansible.builtin.assert:
+    that:
+      - httpd_configure_test.rc == 0
+    fail_msg: >-
+      httpd -t failed. The service was NOT reloaded; fix the config and
+      re-run.
+      stderr: {{ httpd_configure_test.stderr | default('') }}
+      host-evidence: |
+        {{ httpd_configure_evidence.stdout | default('collect failed') }}
+
+- name: Write index page into docroot
+  ansible.builtin.copy:
+    content: "{{ lookup('template', 'index.html.j2') }}"
+    dest: "{{ httpd_configure_docroot }}/index.html"
+    owner: apache
+    group: apache
+    mode: "0644"
+  when: httpd_configure_write_index | bool
+
+- name: Label document root for SELinux
+  ansible.builtin.command:
+    cmd: restorecon -Rv "{{ httpd_configure_docroot }}"
+  register: httpd_configure_restorecon
+  when: ansible_selinux.status | default('disabled') == 'enabled'
+  failed_when: false
+  changed_when: >-
+    httpd_configure_restorecon.rc == 0
+    and (httpd_configure_restorecon.stdout_lines | default([]) | length) > 0
+  tags: [selinux]
+
+- name: Ensure httpd service is enabled and active
+  ansible.builtin.service:
+    name: httpd
+    state: started
+    enabled: true

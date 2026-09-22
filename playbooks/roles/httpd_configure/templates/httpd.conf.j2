@@ -1,0 +1,38 @@
+# Managed by Ansible — do not edit by hand. Regenerate via playbooks/httpd-config.yml.
+
+# --------------------------------------------------------------- identity --
+ServerName {{ httpd_configure_server_name }}:{{ httpd_configure_listen_port }}
+ServerAdmin {{ httpd_configure_server_admin }}
+
+# --------------------------------------------------------------- server ---
+Listen {{ httpd_configure_listen_port }}
+ServerTokens Prod
+ServerSignature Off
+TraceEnable Off
+AddDefaultCharset {{ httpd_configure_charset }}
+
+# -------------------------------------------------------------- keepalive --
+KeepAlive {{ httpd_configure_keepalive }}
+KeepAliveTimeout {{ httpd_configure_keepalive_timeout }}
+MaxKeepAliveRequests {{ httpd_configure_max_keepalive_requests }}
+
+# --------------------------------------------------------------- headers ---
+{% for h in httpd_configure_headers %}
+Header always set {{ h.name }} {{ h.value | quote }}
+{% endfor %}
+
+# -------------------------------------------------------------- directory --
+<Directory "{{ httpd_configure_docroot }}">
+    Options {% if not httpd_configure_allow_index %}-{% endif %}Indexes
+    AllowOverride {{ httpd_configure_allow_override }}
+    Require all granted
+</Directory>
+
+# Never serve hidden files/dotfiles
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+# ------------------------------------------------------------------ logs ---
+LogLevel {{ httpd_configure_log_level }}
+LogFormat "{{ httpd_configure_log_format }}" combined

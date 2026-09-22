@@ -1,0 +1,22 @@
+---
+# Deploy a complete, production-ready httpd configuration.
+#
+# Unlike the install play (httpd.yml), this play focuses on getting the
+# *configuration* right and correct: ServerName, vhost, directory policy,
+# security headers, charset, log format, SELinux context — then validates
+# with `httpd -t` and reloads (graceful) so a change never drops traffic.
+#
+# All values come from role defaults / extra vars, so this is safe to
+# re-run and fully idempotent.
+#
+# Usage (local):
+#   ansible-playbook -i inventory/inventory.yml playbooks/httpd-config.yml
+#
+# Usage (AAP): job template with play "playbooks/httpd-config.yml".
+- name: Deploy httpd configuration
+  hosts: web
+  become: true
+  gather_facts: true
+  roles:
+    - role: httpd_configure
+      tags: [httpd, config]
