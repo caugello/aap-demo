@@ -1,6 +1,8 @@
 ---
 # Inventory for the AAP inventory source.
-# Replace the placeholder IPs with the real addresses of banana and avocado.
+# Note: diag_expected_services is intentionally NOT set here —
+# pass it as extra vars on the AAP job template, e.g.
+#   diag_expected_services: [httpd]
 all:
   children:
     web:
@@ -15,4 +17,3 @@ all:
     ansible_become_method: sudo
     ansible_become_user: root
     ansible_python_interpreter: /usr/bin/python3
-    httpd_server_name: "{{ inventory_hostname }}"

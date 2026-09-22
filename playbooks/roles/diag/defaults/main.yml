@@ -1,10 +1,23 @@
 ---
 # Generic (service-agnostic) host diagnostics defaults.
 #
-# diag_services: OPTIONAL scoped checks, only meaningful once the suspect
-# service is known (e.g. set by LLM triage in a later workflow job).
+# diag_services: OPTIONAL scoped deep checks, run once the suspect service
+# is known (e.g. set by LLM triage in a later workflow job).
 # Each entry maps to tasks/checks/<name>.yaml.
 diag_services: []
+
+# Purpose-aware check: services the host is EXPECTED to be running.
+# Set this in group_vars (e.g. web -> [httpd]). Diag will then verify
+# unit state, the listening port, and (for web services) issue a real
+# local HTTP request. Empty = skip this check.
+diag_expected_services: []
+diag_svc_ports:
+  httpd: 80
+  nginx: 80
+  apache2: 80
+  sshd: 22
+# Issue a real local HTTP request against the expected web service.
+diag_http_probe: true
 
 # Thresholds
 diag_disk_threshold: 85      # percent used -> warn; >=90 hard-fails

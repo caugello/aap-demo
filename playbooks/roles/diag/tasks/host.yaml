@@ -143,6 +143,99 @@
          | map('trim') | map('regex_replace', '\\s+.*', ''))
          | join(', ')) }}
 
+# ------------------------------------- expected services (purpose check) ---
+# The host declares which services it is FOR (diag_expected_services, set in
+# group_vars, e.g. web -> [httpd]). A healthy host has them:
+#   unit running + port listening + (web services) responding to HTTP.
+# This is what lets triage conclude "httpd is broken" even with no crashed
+# unit and no error log.
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+  when: diag_expected_services | length > 0
+
+- name: Check expected service unit state
+  ansible.builtin.include_tasks: ../_finding.yaml
+  loop: "{{ diag_expected_services }}"
+  loop_control:
+    label: "{{ item }}"
+  when: diag_expected_services | length > 0
+  vars:
+    svc_state: "{{ ((ansible_facts.services | default({})).get(item, {}).get('state')) | default('not-found') }}"
+    svc_enabled: "{{ ((ansible_facts.services | default({})).get(item, {}).get('enabled')) | default('unknown') }}"
+    finding_level: >-
+      "ok" if svc_state == 'running'
+      else ("warn" if svc_state == 'not-found' else "fail")
+    finding_area: services
+    finding_detail: >-
+      expected service {{ item }}: state={{ svc_state }}, enabled={{ svc_enabled }}
+
+- name: Collect listening sockets
+  ansible.builtin.command:  # noqa risky-shell-pipe
+    cmd: ss -ltn
+  register: diag_exp_listen
+  failed_when: false
+  changed_when: false
+  when: diag_expected_services | length > 0
+
+- name: Check expected service ports are listening
+  ansible.builtin.include_tasks: ../_finding.yaml
+  loop: "{{ diag_expected_services | select('in', (diag_svc_ports | default({})).keys()) | list }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - diag_expected_services | length > 0
+    - item in (diag_svc_ports | default({})).keys()
+  vars:
+    svc_port: "{{ (diag_svc_ports | default({})).get(item) }}"
+    finding_level: >-
+      "ok" if ((diag_exp_listen is defined)
+      and (diag_exp_listen.stdout is search(':' ~ svc_port ~ '(\\s|$)')))
+      else "fail"
+    finding_area: availability
+    finding_detail: >-
+      {{ item }} port {{ svc_port }}:
+      {{ 'listening' if ((diag_exp_listen is defined)
+         and (diag_exp_listen.stdout is search(':' ~ svc_port ~ '(\\s|$)')))
+         else 'NOT listening (unit may be running but not serving)' }}
+
+- name: Probe expected services over local HTTP
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ (diag_svc_ports | default({})).get(item, 80) }}/"
+    method: GET
+    status_code: [200, 301, 302, 401, 403, 404, 500, 503]
+  register: diag_web_probe
+  failed_when: false
+  changed_when: false
+  loop: "{{ diag_expected_services | select('in', (diag_svc_ports | default({})).keys()) | list }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - diag_http_probe | bool
+    - diag_expected_services | length > 0
+
+- name: Record local HTTP probe findings
+  ansible.builtin.include_tasks: ../_finding.yaml
+  loop: "{{ diag_web_probe.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('?') }}"
+  vars:
+    svc_port: "{{ (diag_svc_ports | default({})).get(item.item | default(''), '?') }}"
+    probe_status: "{{ item.status | default(0) }}"
+    finding_level: >-
+      "ok" if probe_status in [200, 403, 404]
+      else ("warn" if probe_status in [301, 302, 401, 500, 503] else "fail")
+    finding_area: availability
+    finding_detail: >-
+      HTTP GET 127.0.0.1:{{ svc_port }}/ (expected service {{ item.item | default('?') }}):
+      status={{ probe_status if probe_status | int > 0 else 'connection failed' }}
+      {{ (' - ' ~ item.msg) if (item.msg is defined and item.msg | length > 0) else '' }}
+  when:
+    - diag_http_probe | bool
+    - item is defined
+    - item is mapping
+
+
 # ------------------------------------------------------- error log signal ---
 - name: Collect err-level journal lines (last 24h)
   ansible.builtin.command:
