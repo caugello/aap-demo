@@ -62,6 +62,13 @@
 #   * stray duplicate ServerRoot lines appended at EOF by earlier repair runs.
 # Fix: strip every active ServerRoot line, then declare exactly one valid
 # one at the top. Idempotent.
+- name: Announce ServerRoot remediation revision (provenance fingerprint)
+  ansible.builtin.debug:
+    msg: >-
+      [SRM-2] ServerRoot remediation active — editing
+      {{ httpd_configure_main_conf }} (server root: {{ httpd_configure_server_root }}).
+      If you see SRM-1 or no SRM line in the job log, AAP ran a STALE project sync.
+
 - name: Ensure the expected ServerRoot directory exists
   ansible.builtin.file:
     path: "{{ httpd_configure_server_root }}"
@@ -161,6 +168,7 @@
     fail_msg: >-
       httpd -t failed. The service was NOT reloaded; fix the config and
       re-run.
+      (remediation revision: SRM-2)
       stderr: {{ httpd_configure_test.stderr | default('') }}
       host-evidence: |
         {{ httpd_configure_evidence.stdout | default('collect failed') }}
