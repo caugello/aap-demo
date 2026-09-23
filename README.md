@@ -5,7 +5,7 @@ A growing set of Ansible playbooks for our fleet. We start with httpd; more play
 ## Contents
 
 - `httpd` — install and configure the httpd web server
-- `httpd-config` — deploy a complete, production-ready httpd configuration (graceful reload, validated with `httpd -t` first)
+- `httpd-config` — deploy a complete, production-ready `httpd.conf` (templated from a known-good baseline, backed up in place, validated with `httpd -t`, applied with a graceful reload)
 - `diag` — host-level diagnostics that produces an LLM-ready report
 - `sosreport` — deep-dive evidence pack (installs `sos` on demand, runs a plugin-scoped report on the target host)
 
