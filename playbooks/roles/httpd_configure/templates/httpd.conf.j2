@@ -1,38 +1,79 @@
-# Managed by Ansible — do not edit by hand. Regenerate via playbooks/httpd-config.yml.
+## Managed by AAP — playbooks/httpd-config.yml (role: httpd_configure)
+## Do not hand-edit on the host: this file is replaced on each run.
+## Put local overrides in {{ httpd_configure_server_root }}/conf.d/ (loaded last).
 
-# --------------------------------------------------------------- identity --
-ServerName {{ httpd_configure_server_name }}:{{ httpd_configure_listen_port }}
+ServerRoot "{{ httpd_configure_server_root }}"
+
+Listen {{ httpd_configure_listen_port }}
+
+# Load module configuration maintained by the httpd packages.
+Include conf.modules.d/*.conf
+
+User {{ httpd_configure_user }}
+Group {{ httpd_configure_group }}
+
+# Privacy + hardening
+ServerTokens {{ httpd_configure_server_tokens }}
+ServerSignature Off
+TraceEnable {{ httpd_configure_trace_enable }}
+ServerName {{ httpd_configure_server_name }}
 ServerAdmin {{ httpd_configure_server_admin }}
 
-# --------------------------------------------------------------- server ---
-Listen {{ httpd_configure_listen_port }}
-ServerTokens Prod
-ServerSignature Off
-TraceEnable Off
-AddDefaultCharset {{ httpd_configure_charset }}
+# Default-deny on /; explicit grants below.
+<Directory />
+    AllowOverride none
+    Require all denied
+</Directory>
 
-# -------------------------------------------------------------- keepalive --
-KeepAlive {{ httpd_configure_keepalive }}
-KeepAliveTimeout {{ httpd_configure_keepalive_timeout }}
-MaxKeepAliveRequests {{ httpd_configure_max_keepalive_requests }}
-
-# --------------------------------------------------------------- headers ---
-{% for h in httpd_configure_headers %}
-Header always set {{ h.name }} {{ h.value | quote }}
-{% endfor %}
-
-# -------------------------------------------------------------- directory --
+# Document root + directory policy
+DocumentRoot "{{ httpd_configure_docroot }}"
 <Directory "{{ httpd_configure_docroot }}">
-    Options {% if not httpd_configure_allow_index %}-{% endif %}Indexes
+    Options {{ 'Indexes' if httpd_configure_allow_index | bool else 'None' }} FollowSymLinks
     AllowOverride {{ httpd_configure_allow_override }}
     Require all granted
 </Directory>
 
-# Never serve hidden files/dotfiles
-<FilesMatch "^\.">
-    Require all denied
-</FilesMatch>
+<IfModule dir_module>
+    DirectoryIndex index.html
+</IfModule>
 
-# ------------------------------------------------------------------ logs ---
+# Deny dotfiles (.htaccess, .htpasswd, ...)
+<Files ".ht*">
+    Require all denied
+</Files>
+
+# Logging (paths relative to ServerRoot, i.e. {{ httpd_configure_server_root }}/logs)
+ErrorLog "logs/error_log"
 LogLevel {{ httpd_configure_log_level }}
-LogFormat "{{ httpd_configure_log_format }}" combined
+
+<IfModule log_config_module>
+    LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined
+    LogFormat "%h %l %u %t \"%r\" %>s %b" common
+
+    <IfModule logio_module>
+      LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\" %I %O" combinedio
+    </IfModule>
+
+    CustomLog "logs/access_log" {{ httpd_configure_log_format }}
+</IfModule>
+
+# Character set
+AddDefaultCharset {{ httpd_configure_charset }}
+
+# Keepalive tuning
+KeepAlive {{ httpd_configure_keepalive }}
+KeepAliveTimeout {{ httpd_configure_keepalive_timeout }}
+MaxKeepAliveRequests {{ httpd_configure_max_keepalive_requests }}
+
+# Security response headers
+<IfModule headers_module>
+{% for header in httpd_configure_headers %}
+    Header always set {{ header.name }} {{ header.value }}
+{% endfor %}
+</IfModule>
+
+# Performance
+EnableSendfile on
+
+# Local overrides (loaded after this file).
+IncludeOptional conf.d/*.conf

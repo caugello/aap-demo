@@ -1,5 +1,7 @@
 ---
-# Deploy a complete httpd configuration and apply it safely.
+# Deploy a complete httpd configuration: the main conf is templated from
+# scratch (backing up the existing file), validated with `httpd -t`, and
+# then applied with a graceful reload. A bad config can never be reloaded.
 
 - name: Verify httpd is installed
   ansible.builtin.command:
@@ -17,111 +19,24 @@
       Run the install play (playbooks/httpd.yml) first.
     quiet: true
 
-- name: Discover the compiled-in server root and conf dir
-  ansible.builtin.command:
-    cmd: httpd -V
-  register: httpd_configure_ver
-  failed_when: false
-  changed_when: false
-
-- name: Record effective httpd layout
-  ansible.builtin.set_fact:
-    httpd_configure_server_root: >-
-      {{ ((httpd_configure_ver.stdout_lines | default([]))
-         | select('search', 'SERVER_ROOT')
-         | map('trim') | map('regex_replace', '.*=\\s*', '')) | first
-         | default('/etc/httpd') }}
-    httpd_configure_main_conf: >-
-      {{ ((httpd_configure_ver.stdout_lines | default([]))
-         | select('search', 'APACHE_CONFDIR')
-         | map('trim') | map('regex_replace', '.*=\\s*', '')) | first
-         | default('/etc/httpd/conf/httpd.conf') }}
-
-- name: Anchor the managed drop-in inside the discovered server root
-  ansible.builtin.set_fact:
-    httpd_configure_dest: "{{ httpd_configure_server_root }}/conf.d/90-aap-managed.conf"
-
-- name: Verify no conflicting ServerName is set in conf.d
-  ansible.builtin.shell:  # noqa risky-shell-pipe
-    cmd: grep -RIn '^ServerName ' "{{ httpd_configure_server_root }}/conf.d/" "{{ httpd_configure_main_conf }}" 2>/dev/null
-  register: httpd_configure_servernames
-  failed_when: false
-  changed_when: false
-
-- name: Warn on multiple ServerName directives (first one wins per virtual host)
-  ansible.builtin.debug:
-    msg: >-
-      NOTE: multiple ServerName directives found — verify they agree:
-      {{ httpd_configure_servernames.stdout_lines | default([]) }}
-  when: httpd_configure_servernames.stdout_lines | default([]) | length > 1
-
-# --------------------------------------- ServerRoot remediation (broken main conf) ---
-# Known breakages:
-#   * ServerRoot points at a missing dir (e.g. "/etc/httpdx") — httpd -t
-#     fails before conf.d loads; even `httpd -V` errors.
-#   * stray duplicate ServerRoot lines appended at EOF by earlier repair runs.
-# Fix: strip every active ServerRoot line, then declare exactly one valid
-# one at the top. Idempotent.
-- name: Announce ServerRoot remediation revision (provenance fingerprint)
-  ansible.builtin.debug:
-    msg: >-
-      [SRM-2] ServerRoot remediation active — editing
-      {{ httpd_configure_main_conf }} (server root: {{ httpd_configure_server_root }}).
-      If you see SRM-1 or no SRM line in the job log, AAP ran a STALE project sync.
-
-- name: Ensure the expected ServerRoot directory exists
+# ---------------------------------------------------------------- directories ---
+# The template references ServerRoot-relative and absolute paths; make sure
+# every one of them exists before we ask httpd to parse the config.
+- name: Ensure base directories exist (ServerRoot, conf, logs)
   ansible.builtin.file:
-    path: "{{ httpd_configure_server_root }}"
+    path: "{{ item }}"
     state: directory
     owner: root
     group: root
     mode: "0755"
+  loop:
+    - "{{ httpd_configure_server_root }}"
+    - "{{ httpd_configure_server_root }}/conf"
+    - "{{ httpd_configure_server_root }}/conf.d"
+    - "{{ httpd_configure_server_root }}/conf.modules.d"
+    - "{{ httpd_configure_server_root }}/logs"
 
-- name: Remove every active ServerRoot directive from the main conf
-  ansible.builtin.replace:
-    path: "{{ httpd_configure_main_conf }}"
-    regexp: "^ServerRoot\\s+.*\\n"
-    replace: ""
-    multiline: true
-    backup: true
-
-- name: Declare exactly one valid ServerRoot at the top of the main conf
-  ansible.builtin.lineinfile:
-    path: "{{ httpd_configure_main_conf }}"
-    insertbefore: BOF
-    regexp: "^ServerRoot\\s+{{ httpd_configure_server_root }}\\s*$"
-    line: "ServerRoot {{ httpd_configure_server_root }}"
-  register: httpd_configure_serverroot_fix
-
-- name: Verify the main conf now has exactly one active ServerRoot
-  ansible.builtin.shell:  # noqa risky-shell-pipe
-    cmd: grep -cE '^ServerRoot[[:space:]]+' "{{ httpd_configure_main_conf }}"
-  register: httpd_configure_serverroot_count
-  failed_when: false
-  changed_when: false
-
-- name: Surface ServerRoot normalization state
-  ansible.builtin.assert:
-    that:
-      - httpd_configure_serverroot_count.stdout | default('0') | int == 1
-    fail_msg: >-
-      Expected exactly one active ServerRoot line in
-      {{ httpd_configure_main_conf }}, found
-      {{ httpd_configure_serverroot_count.stdout | default('0') }}.
-    success_msg: >-
-      ServerRoot normalized to {{ httpd_configure_server_root }}
-      (changed: {{ httpd_configure_serverroot_fix.changed | default(false) }})
-    quiet: true
-
-- name: Create httpd log directory if missing
-  ansible.builtin.file:
-    path: "{{ httpd_configure_log_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: Ensure document root exists with sane ownership
+- name: Ensure the document root exists with sane ownership
   ansible.builtin.file:
     path: "{{ httpd_configure_docroot }}"
     state: directory
@@ -129,15 +44,18 @@
     group: apache
     mode: "0755"
 
-- name: Deploy the managed httpd configuration
+# ----------------------------------------------------------- deploy the config ---
+- name: Deploy the templated main httpd.conf with a backup copy
   ansible.builtin.template:
     src: httpd.conf.j2
-    dest: "{{ httpd_configure_dest }}"
+    dest: "{{ httpd_configure_main_conf }}"
     owner: root
     group: root
     mode: "0640"
+    backup: true
   notify: Reloading httpd
 
+# ------------------------------------------------------------ validate + reload ---
 - name: Validate configuration syntax before allowing reload
   ansible.builtin.command:
     cmd: httpd -t -D DONT_LOCK_LOGS
@@ -148,14 +66,12 @@
 - name: Gather evidence for a failed config test
   ansible.builtin.shell:  # noqa risky-shell-pipe
     cmd: >-
-      echo "=== ServerRoot line ===";
-      grep -n 'ServerRoot' "{{ httpd_configure_main_conf }}" 2>&1;
       echo "=== ServerRoot dir ===";
       ls -ld "{{ httpd_configure_server_root }}" 2>&1;
-      echo "=== compiled-in values ===";
-      httpd -V 2>&1 | head -8;
-      echo "=== line 34 area of main conf ===";
-      sed -n '28,40p' "{{ httpd_configure_main_conf }}" 2>&1
+      echo "=== module dir ===";
+      ls "{{ httpd_configure_server_root }}/conf.modules.d/" 2>&1 | head -8;
+      echo "=== deployed ServerRoot line ===";
+      grep -n '^ServerRoot' "{{ httpd_configure_main_conf }}" 2>&1
   register: httpd_configure_evidence
   failed_when: false
   changed_when: false
@@ -168,11 +84,11 @@
     fail_msg: >-
       httpd -t failed. The service was NOT reloaded; fix the config and
       re-run.
-      (remediation revision: SRM-2)
       stderr: {{ httpd_configure_test.stderr | default('') }}
       host-evidence: |
         {{ httpd_configure_evidence.stdout | default('collect failed') }}
 
+# ------------------------------------------------------------------- finishing ---
 - name: Write index page into docroot
   ansible.builtin.copy:
     content: "{{ lookup('template', 'index.html.j2') }}"

@@ -1,18 +1,40 @@
 ---
 # Complete httpd configuration defaults.
-# Override via host_vars / group_vars / extra vars.
+# Every value is overridable via host_vars / group_vars / extra vars.
+
+# Layout (standard httpd package layout on RHEL-family)
+httpd_configure_server_root: /etc/httpd
+httpd_configure_main_conf: /etc/httpd/conf/httpd.conf
 
 # Listen
 httpd_configure_listen_port: 80
 
 # Identity
 httpd_configure_server_name: "{{ inventory_hostname }}"
-httpd_configure_server_admin: "webmaster@{{ inventory_hostname }}"
+httpd_configure_server_admin: webmaster@localhost
+
+# Runtime user
+httpd_configure_user: apache
+httpd_configure_group: apache
 
 # Document root + directory policy
 httpd_configure_docroot: /var/www/html
 httpd_configure_allow_index: false
-httpd_configure_allow_override: None
+httpd_configure_allow_override: "None"
+
+# Privacy + hardening
+httpd_configure_server_tokens: Prod
+httpd_configure_trace_enable: "Off"
+
+# Character set + keepalive
+httpd_configure_charset: UTF-8
+httpd_configure_keepalive: "On"
+httpd_configure_keepalive_timeout: 5
+httpd_configure_max_keepalive_requests: 100
+
+# Logging (named formats combined/common are defined by the template)
+httpd_configure_log_level: warn
+httpd_configure_log_format: combined
 
 # Security response headers (emitted as: Header always set <name> <value>)
 httpd_configure_headers:
@@ -21,27 +43,5 @@ httpd_configure_headers:
   - { name: "Referrer-Policy", value: "strict-origin-when-cross-origin" }
   - { name: "X-Permitted-Cross-Domain-Policies", value: "none" }
 
-# Character set + keepalive
-httpd_configure_charset: "UTF-8"
-httpd_configure_keepalive: "On"
-httpd_configure_keepalive_timeout: 5
-httpd_configure_max_keepalive_requests: 100
-
-# Logging
-httpd_configure_log_level: info
-httpd_configure_log_format: '%h %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\"'
-httpd_configure_log_dir: /var/log/httpd
-
-# Where the managed config is written (a drop-in that wins ordering).
-httpd_configure_dest: /etc/httpd/conf.d/90-aap-managed.conf
-
-# Main config + the ServerRoot it must point at (fixes "ServerRoot must be a valid directory").
-httpd_configure_main_conf: /etc/httpd/conf/httpd.conf
-httpd_configure_server_root: /etc/httpd
-httpd_configure_config_root: /etc/httpd/conf
-
 # Write a friendly index.html into the docroot.
-httpd_configure_write_index: true
-
-# Reload (graceful) rather than restart when only config changed.
-httpd_configure_graceful: true
+httpd_configure_write_index: "true"
