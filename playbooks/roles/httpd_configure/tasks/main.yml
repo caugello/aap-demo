@@ -56,9 +56,12 @@
   when: httpd_configure_servernames.stdout_lines | default([]) | length > 1
 
 # --------------------------------------- ServerRoot remediation (broken main conf) ---
-# Common breakage: ServerRoot points at a directory that no longer exists
-# (failed partial install, manual tampering, container artifact). httpd -t
-# then fails before conf.d even loads. Normalize it to a valid directory.
+# Known breakages:
+#   * ServerRoot points at a missing dir (e.g. "/etc/httpdx") — httpd -t
+#     fails before conf.d loads; even `httpd -V` errors.
+#   * stray duplicate ServerRoot lines appended at EOF by earlier repair runs.
+# Fix: strip every active ServerRoot line, then declare exactly one valid
+# one at the top. Idempotent.
 - name: Ensure the expected ServerRoot directory exists
   ansible.builtin.file:
     path: "{{ httpd_configure_server_root }}"
@@ -67,29 +70,41 @@
     group: root
     mode: "0755"
 
-- name: Check whether the main conf defines a ServerRoot
+- name: Remove every active ServerRoot directive from the main conf
+  ansible.builtin.replace:
+    path: "{{ httpd_configure_main_conf }}"
+    regexp: "^ServerRoot\\s+.*\\n"
+    replace: ""
+    multiline: true
+    backup: true
+
+- name: Declare exactly one valid ServerRoot at the top of the main conf
+  ansible.builtin.lineinfile:
+    path: "{{ httpd_configure_main_conf }}"
+    insertbefore: BOF
+    regexp: "^ServerRoot\\s+{{ httpd_configure_server_root }}\\s*$"
+    line: "ServerRoot {{ httpd_configure_server_root }}"
+  register: httpd_configure_serverroot_fix
+
+- name: Verify the main conf now has exactly one active ServerRoot
   ansible.builtin.shell:  # noqa risky-shell-pipe
-    cmd: grep -qE '^ServerRoot[[:space:]]+' "{{ httpd_configure_main_conf }}"
-  register: httpd_configure_has_serverroot
+    cmd: grep -cE '^ServerRoot[[:space:]]+' "{{ httpd_configure_main_conf }}"
+  register: httpd_configure_serverroot_count
   failed_when: false
   changed_when: false
 
-- name: Replace an existing malformed ServerRoot
-  ansible.builtin.lineinfile:
-    path: "{{ httpd_configure_main_conf }}"
-    regexp: "^ServerRoot[[:space:]]+.+"
-    line: "ServerRoot {{ httpd_configure_server_root }}"
-  register: httpd_configure_serverroot_fix
-  when: httpd_configure_has_serverroot.rc == 0
-
-- name: Add a valid ServerRoot if the main conf has none
-  ansible.builtin.lineinfile:
-    path: "{{ httpd_configure_main_conf }}"
-    insertafter: EOF
-    regexp: "^ServerRoot[[:space:]]+{{ httpd_configure_server_root }}[[:space:]]*$"
-    line: "ServerRoot {{ httpd_configure_server_root }}"
-  register: httpd_configure_serverroot_fix
-  when: httpd_configure_has_serverroot.rc != 0
+- name: Surface ServerRoot normalization state
+  ansible.builtin.assert:
+    that:
+      - httpd_configure_serverroot_count.stdout | default('0') | int == 1
+    fail_msg: >-
+      Expected exactly one active ServerRoot line in
+      {{ httpd_configure_main_conf }}, found
+      {{ httpd_configure_serverroot_count.stdout | default('0') }}.
+    success_msg: >-
+      ServerRoot normalized to {{ httpd_configure_server_root }}
+      (changed: {{ httpd_configure_serverroot_fix.changed | default(false) }})
+    quiet: true
 
 - name: Create httpd log directory if missing
   ansible.builtin.file:
