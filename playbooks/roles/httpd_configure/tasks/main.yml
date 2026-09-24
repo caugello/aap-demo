@@ -44,6 +44,29 @@
     group: apache
     mode: "0755"
 
+# ------------------------------------------------- stale drop-in cleanup ---
+# An earlier iteration of this role managed configuration as a conf.d drop-in.
+# That design is gone (the main conf is now fully templated), so remove the
+# drop-in it left behind — its Listen directive would collide with the main
+# conf (AH00526: multiple Listeners on the same IP:port).
+- name: Check for a stale managed drop-in from the earlier design
+  ansible.builtin.stat:
+    path: "{{ httpd_configure_server_root }}/conf.d/90-aap-managed.conf"
+  register: httpd_configure_dropin_stat
+
+- name: Archive the stale managed drop-in
+  ansible.builtin.copy:
+    remote_src: true
+    src: "{{ httpd_configure_server_root }}/conf.d/90-aap-managed.conf"
+    dest: "{{ httpd_configure_server_root }}/conf.d/90-aap-managed.conf.removed"
+  when: httpd_configure_dropin_stat.stat.exists
+
+- name: Remove the stale managed drop-in
+  ansible.builtin.file:
+    path: "{{ httpd_configure_server_root }}/conf.d/90-aap-managed.conf"
+    state: absent
+  when: httpd_configure_dropin_stat.stat.exists
+
 # ----------------------------------------------------------- deploy the config ---
 - name: Deploy the templated main httpd.conf with a backup copy
   ansible.builtin.template:
