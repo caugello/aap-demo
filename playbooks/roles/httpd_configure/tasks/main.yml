@@ -44,6 +44,16 @@
     group: apache
     mode: "0755"
 
+- name: Check whether the standard mime.types file exists
+  ansible.builtin.stat:
+    path: "{{ httpd_configure_mime_types }}"
+  register: httpd_configure_mime_stat
+  changed_when: false
+
+- name: Record mime types availability (drives an optional block in the template)
+  ansible.builtin.set_fact:
+    httpd_configure_mime_types_available: "{{ httpd_configure_mime_stat.stat.exists }}"
+
 # ------------------------------------------------- stale drop-in cleanup ---
 # An earlier iteration of this role managed configuration as a conf.d drop-in.
 # That design is gone (the main conf is now fully templated), so remove the

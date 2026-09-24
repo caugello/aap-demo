@@ -60,6 +60,15 @@ LogLevel {{ httpd_configure_log_level }}
 # Character set
 AddDefaultCharset {{ httpd_configure_charset }}
 
+# MIME types (emitted only when the file is present on this host)
+{% if httpd_configure_mime_types_available | default(true) | bool %}
+<IfModule mime_module>
+    TypesConfig {{ httpd_configure_mime_types }}
+    AddType application/x-compress .Z
+    AddType application/x-gzip .gz .tgz
+</IfModule>
+{% endif %}
+
 # Keepalive tuning
 KeepAlive {{ httpd_configure_keepalive }}
 KeepAliveTimeout {{ httpd_configure_keepalive_timeout }}

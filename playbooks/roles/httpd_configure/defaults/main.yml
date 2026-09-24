@@ -28,6 +28,9 @@ httpd_configure_trace_enable: "Off"
 
 # Character set + keepalive
 httpd_configure_charset: UTF-8
+
+# MIME types file (provided by the mailcap package on RHEL-family hosts)
+httpd_configure_mime_types: /etc/mime.types
 httpd_configure_keepalive: "On"
 httpd_configure_keepalive_timeout: 5
 httpd_configure_max_keepalive_requests: 100
