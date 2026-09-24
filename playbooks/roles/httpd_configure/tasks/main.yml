@@ -59,6 +59,9 @@
     remote_src: true
     src: "{{ httpd_configure_server_root }}/conf.d/90-aap-managed.conf"
     dest: "{{ httpd_configure_server_root }}/conf.d/90-aap-managed.conf.removed"
+    owner: root
+    group: root
+    mode: "0640"
   when: httpd_configure_dropin_stat.stat.exists
 
 - name: Remove the stale managed drop-in
